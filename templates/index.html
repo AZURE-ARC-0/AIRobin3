@@ -1,0 +1,469 @@
+<head>
+    <title>Chatbot</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/highlight.js/10.7.2/styles/default.min.css">
+    <script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/10.7.2/highlight.min.js"></script>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/marked/2.1.3/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://unpkg.com/json5@2/dist/index.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.0/jquery.min.js" integrity="sha512-3gJwYpMe3QewGELv8k/BX9vcqhryRdzRMxVfq6ngyWXwo03GFEzjsUm8Q7RZcHPHksttq7/GFoxjCVUjkjvPdw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lightbox2/2.11.4/js/lightbox.js" integrity="sha512-MBa5biLyZuJEdQR7TkouL0i1HAqpq8lh8suPgA//wpxGx4fU1SGz1hGSlZhYmm+b7HkoncCWpfVKN3NDcowZgQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/lightbox2/2.11.4/css/lightbox.min.css" integrity="sha512-ZKX+BvQihRJPA8CROKBhDNvoc2aDMOdAlcm7TUQY+35XYtrd3yh95QOOhsPDQY9QnKE0Wqag9y38OIgEvb88cA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+
+</head>
+    <script>
+        var chatHistory = [];
+        var tempReceived = '';
+        var tempFormatted = '';
+        var settings = {};
+
+        // create a new marked renderer to add lightbox to images
+        var renderer = new marked.Renderer();
+        renderer.image = function(href, title, text) {
+            // display images with 250px width and lightbox js
+            return `<a href="${href}" data-lightbox="${text}" data-title="${title}"><img src="${href}" width="250px" alt="${text}"></a>`;
+        };
+        renderer.link = function(href, title, text) {
+        return `<a target="_blank" href="${href}" title="${title}">${text}</a>`;
+        };
+        // set the options for marked and a highlighter and copy button
+        marked.setOptions({
+            highlight: function(code, lang) {
+                return '<div class="language">' + (lang || 'code') + '</div>' + 
+                    '<button class="copy-btn" onclick="copyToClipboard(this)">Copy</button>' +
+                    '<pre><code>' + hljs.highlightAuto(code, [lang]).value + '</code></pre>';
+            },
+            renderer: renderer,
+        });
+
+        // keep the last 10 messages in history
+        // need to update this to a better system
+        function updateHistory(msg) {
+            chatHistory.push(msg);
+            if (chatHistory.length > 10) {
+                chatHistory.shift();
+            }
+        }
+
+        // parse a json with json5
+        function parseComplexJson(jsonStr) {
+            // Now parse the JSON string using JSON5
+            return JSON5.parse(jsonStr);
+        }
+
+        // populate the settings menu
+        function populateSettingsMenu() {
+            var settingsMenu = document.getElementById("mySidenav");
+            settingsMenu.innerHTML = ''; // clear the menu
+            settingsMenu.innerHTML += '<a href="javascript:void(0)" class="closebtn" onclick="closeNav()">&times;</a>';
+            settingsMenu.innerHTML += '<h2>Settings</h2><br>';
+            settingsMenu.innerHTML += '<h3>Addons</h3><br>';
+            for (let addon in settings) { 
+                // loop through the settings and create a menu item for each addon
+                if (settings.hasOwnProperty(addon)) {
+                    var status = settings[addon] ? '✅' : '❌';
+                    var menuItem = document.createElement('a');
+                    menuItem.href = "#";
+                    menuItem.innerHTML = addon + ": " + status;
+                    menuItem.onclick = (function(addon) {
+                        return function(e) {
+                            e.preventDefault(); // prevent the default action
+                            socket.emit('change_addon_status', { addon: addon, enabled: !settings[addon] });
+                            console.log('change_addon_status: ', addon, !settings[addon]);
+                        };
+                    })(addon);
+                    settingsMenu.appendChild(menuItem);
+                }
+            }
+            // create a new div for other settings
+            var otherSettings = document.createElement('div');
+            otherSettings.innerHTML = '<br><br><h3>Other settings</h3><br>';
+            //append the div to the menu
+            settingsMenu.appendChild(otherSettings);
+        }
+
+        // copy the code to the clipboard
+        function copyToClipboard(btn) {
+            var code = btn.nextElementSibling.innerText;
+            var textarea = document.createElement('textarea');
+            textarea.textContent = code;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            var overlay = document.getElementById('overlay');
+            overlay.textContent = 'Code copied to clipboard';
+            overlay.classList.add('active');
+            setTimeout(function() {
+                overlay.classList.remove('active');
+            }, 1000);
+                }
+
+        // connect to socket and use websocket transport to ensure a swift connection
+        var socket = io.connect('http://' + document.domain + ':' + location.port, {transports: ['websocket']});
+        socket.on('connect', function() {
+            console.log('User has connected!');
+        });
+
+        // disconnect
+        socket.on('disconnect', function() {
+            console.log('User has disconnected!');
+        });
+
+        // receive settings
+        socket.on('settings', function(data) {
+            console.log('Received settings: ', data);
+            settings = JSON.parse(data);
+            populateSettingsMenu();
+        });
+
+        // receive change_addon_status
+        socket.on('change_addon_status', function(data) {
+            settings[data.addon] = data.enabled;
+            populateSettingsMenu();
+            console.log('Received change_addon_status: ', data);
+        });
+        
+        socket.on('message', function(msg) {
+            var timestamp = new Date().toLocaleTimeString();
+            
+            // be sure the msg is converted to json
+            if (typeof msg === 'string') {
+                try {
+                    msg = JSON.parse(msg);
+                } catch (e) {
+                    console.error('Error parsing JSON: ', e);
+                }
+            }
+
+            // import the settings and populate the settings menu
+            if (msg.settings) {
+                console.log('settings: ' + msg.settings);
+                settings = msg.settings;
+                populateSettingsMenu();
+                return;
+            }
+
+            // replace the occassional \n with in the openAI responses
+            let content = msg.content;
+            if (msg.content) {
+                content = msg.content.replace(/\n/g,'').trim();
+            }
+            // end of the message when receiving normal messages
+            if (content == undefined) {
+                console.log('end normal msg');
+                // parse the last message content with marked
+                console.log('Received: ' + tempReceived);
+                // update the history with the bot message
+                updateHistory('\nBot: ' + tempReceived);
+                // clear the tempReceived and tempFormatted
+                tempReceived = '';
+                tempFormatted = '';
+                var lastMessage = document.querySelector('.last-message');
+                if (lastMessage) {
+                    //lastMessage.querySelector('.bubble').innerHTML = marked(lastMessage.querySelector('.bubble').innerHTML);
+                    document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+                }
+                content = '';
+                return;
+            }
+            //console.log('content:' + content);
+            // the bot is using an addon
+            if (content && content.startsWith('[using')) {
+                console.log('using addon');
+                console.log('content:' + content);
+                tempchild = document.getElementById('messages').lastChild;
+                // check if the tempchild has a spinner, if so, remove it
+                if (tempchild.querySelector('.spinner') != null) {
+                    tempchild.querySelector('.spinner').remove();
+                    document.getElementById('messages').lastChild.remove();
+                }
+                var match = content.match(/\[using addon: (\w+) with arguments: ({.*?})\]/);
+                if (match) {
+                    var addon = match[1];
+                    var args = parseComplexJson(match[2]);
+
+                    var lastMessage = document.querySelector('.last-message');
+                    if (lastMessage) {
+                        lastMessage.classList.remove('last-message');
+                    }
+
+                    // Create a string representation of args properties
+                    var argsString = '';
+                    for (var key in args) {
+                        if (args.hasOwnProperty(key)) {
+                            argsString += `<div class="arg"><b>${key}:</b> ${escapeHTML(args[key])}</div>`;
+                        }
+                    }
+
+                    var chatMessage = `
+                        <div class="message system">
+                            <span class="timestamp">${timestamp}</span>
+                            <div class="bubble">
+                                <div class="expandable" onclick="this.classList.toggle('expanded')">
+                                    <div class="title">Using: ${addon}<div class="arrow"></div></div>
+                                    ${argsString}  <!-- Insert the args properties here -->
+                                </div>
+                            </div>
+                        </div>
+                    `;
+
+                    document.getElementById('messages').innerHTML += chatMessage;
+                }
+                
+                 // create a bot message div with a loading spinner
+                var botMessage = '<div class="message bot last-message"><span class="timestamp">' + timestamp + '</span><div class="bubble"><div class="spinner"></div></div></div>';
+                var element = document.createElement('div');
+                element.innerHTML = botMessage;
+                document.getElementById('messages').innerHTML += botMessage;
+                document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+                content = '';
+                tempReceived = '';
+                tempFormatted = '';
+            }
+            else {
+                // if the msg.role exist, its the first chunk of the bot message
+                if (msg.role) {
+                    console.log('1 start msg');
+                    // remove the spinner
+                    var lastMessage = document.querySelector('.last-message');
+                    if (lastMessage) {
+                        if(lastMessage.querySelector('.spinner') != null) {
+                            lastMessage.querySelector('.spinner').remove();
+                        }
+                    }
+                    tempReceived += msg.content;
+                    tempFormatted = tempReceived;
+                    // count the amount of ``` if there is none, use marked, if there is 1 do not use marked, if there are 2, use marked
+                    var count = (tempReceived.match(/```/g) || []).length;
+                    if (count > 0) {
+                        if (count % 2 == 0) {
+                            tempFormatted = marked(tempReceived);
+                        }
+                        else {
+                            // add ``` to the end of the message
+                            tempFormatted = tempReceived + '\n```';
+                            // format it
+                            tempFormatted = marked(tempFormatted);
+                        }
+                    }
+                    else {
+                        tempFormatted = marked(tempReceived);
+                    }
+                    document.getElementById('messages').lastChild.remove();
+                    var chatMessage = '<div class="message bot last-message"><span class="timestamp">' + timestamp + '</span><div class="bubble">' + tempFormatted + '</div>'; 
+                    document.getElementById('messages').innerHTML += chatMessage;
+                }
+                else {
+                    // get the last message div and append the text only
+                    var lastMessage = document.querySelector('.last-message');
+                    if (lastMessage) {
+                        if(lastMessage.querySelector('.spinner') != null) {
+                            lastMessage.querySelector('.spinner').remove();
+                        }
+                        tempReceived += msg.content;
+                        tempFormatted = tempReceived;
+                        
+                        // count the amount of ``` if there is none, use marked, if there is 1 do not use marked, if there are 2, use marked
+                        var count = (tempReceived.match(/```/g) || []).length;
+                        if (count > 0) {
+                            if (count % 2 == 0) {
+                                tempFormatted = marked(tempReceived);
+                            }
+                            else {
+                                // add ``` to the end of the message
+                                tempFormatted = tempReceived + '\n```';
+                                // format it
+                                tempFormatted = marked(tempFormatted);
+                            }
+                        }
+                        else {
+                            tempFormatted = marked(tempReceived);
+                        }
+                        lastMessage.querySelector('.bubble').innerHTML = tempFormatted;
+                        document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+                    }
+                }
+                // if msg is empty, its the last part of the bot message
+                if (!msg.role && msg.content && msg.content === '') {
+                    console.log('end msg');
+                    console.log('end Received: ' + tempReceived);
+                    updateHistory('\nBot: ' + tempReceived);
+                    tempReceived = '';
+                    tempFormatted = '';
+                    var lastMessage = document.querySelector('.last-message');
+                    if (lastMessage) {
+                        //lastMessage.classList.remove('last-message');
+                    }
+                    document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+                }
+            }
+        });
+        function escapeHTML(str) {
+            var div = document.createElement('div');
+            div.appendChild(document.createTextNode(str));
+            return div.innerHTML;
+        }
+    </script>
+</head>
+<body>
+    <div id="mySidenav" class="sidenav">
+        <a href="javascript:void(0)" class="closebtn" onclick="closeNav()">&times;</a>
+        <a href="#">Setting 1</a>
+        <a href="#">Setting 2</a>
+        <a href="#">Setting 3</a>
+        <a href="#">Setting 4</a>
+      </div>
+    <h1>Chatbot</h1>
+    <div id="overlay">
+        <div class="text">Code copied to clipboard</div>
+    </div>
+        <div id="chat-container" class="chat-container">
+            <div id="messages"></div>
+            <divclass="message-container">
+                <div class="preset-text-container">
+                    <button class="preset-text-button" onclick="insertPresetText('Continue')">Continue</button>
+                    <button class="preset-text-button" onclick="insertPresetText('Ok')">Ok</button>
+                    <button class="preset-text-button" onclick="insertPresetText('What is the weather like?')">What is the weather like?</button>
+                    <button class="preset-text-button" onclick="insertPresetText('What are you?')">What are you?</button>
+                    <!-- Add more buttons as needed -->
+                </div>                
+                <div class="input-field">
+                    <i class="fa fa-cog cogwheel" onclick="openNav()"></i><textarea id="message" placeholder="Type a message..."></textarea>
+                    <input type="file" id="fileUpload" style="display: none;">
+                    <label for="fileUpload">
+                        <i class="fa fa-upload upload-icon"></i>
+                    </label>
+                    <div id="fileInfo">
+                        <span id="fileName"></span>
+                        <button id="deleteFile">❌</button>
+                        <button id="uploadFile">💾</button>
+                    </div>
+                    <button id="send" class="send-button">Send</button>
+                </div>
+            </div>
+        </div>
+    </body>
+    <script>
+    let lastUpload = '';
+    function insertPresetText(text) {
+        var messageInput = document.getElementById('message');
+        messageInput.value += text;
+        document.getElementById('send').click();
+    }
+
+    document.getElementById('fileUpload').addEventListener('change', function() {
+    var fileName = this.files[0].name;
+        document.getElementById('fileName').textContent = fileName;
+        document.getElementById('deleteFile').style.display = 'inline-block';
+        document.getElementById('uploadFile').style.display = 'inline-block';
+    });
+
+    document.getElementById('deleteFile').addEventListener('click', function() {
+        document.getElementById('fileUpload').value = '';
+        document.getElementById('fileName').textContent = '';
+        this.style.display = 'none';
+    });
+
+    document.getElementById('uploadFile').addEventListener('click', function() {
+        var file = document.getElementById('fileUpload').files[0];
+        sendAttachment(file);
+    });
+
+    function openNav() {
+        document.getElementById("mySidenav").style.width = "350px";
+        document.getElementById("chat-container").style.marginLeft = "350px";
+        }
+
+    function closeNav() {
+        document.getElementById("mySidenav").style.width = "0";
+        document.getElementById("chat-container").style.marginLeft = "0";
+        }
+
+    async function sendAttachment(file) {
+        console.log(file);
+
+        if (file) {
+            console.log('file found...');
+            var formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                let controller = new AbortController();
+                let signal = controller.signal;
+                let timeoutId = setTimeout(() => controller.abort(), 5000); // 5000ms timeout
+                console.log('Uploading file...');
+                let response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData,
+                    signal: signal
+                });
+                clearTimeout(timeoutId);
+                if (!response.ok) {
+                    // try again
+                    console.log('Retrying file upload...');
+                    sendAttachment(file);
+                }
+                console.log('awaiting file upload result...');
+                let text = await response.text();
+                console.log(text);
+                var overlay = document.getElementById('overlay');
+                overlay.textContent = 'File ' + text + ' uploaded...';
+                overlay.classList.add('active');
+                setTimeout(function() {
+                    overlay.classList.remove('active');
+                }, 1000);
+                lastUpload = text;
+                document.getElementById('fileUpload').value = '';
+                document.getElementById('fileName').textContent = '';
+                document.getElementById('deleteFile').style.display = 'none';
+                document.getElementById('uploadFile').style.display = 'none';
+            } catch (error) {
+                console.error(error);
+                console.log('Retrying file upload...');
+                sendAttachment(file);
+            }
+        }
+    }
+    
+    document.getElementById('send').addEventListener('click', function() {
+        var attached_file = lastUpload;
+        var message = document.getElementById('message').value;
+        newmessage = 'These are the last 10 messages, use them for context only!\nReply to the last message only!' + chatHistory.join('\n') + '\nend of chathistory\n--------------------------\nUser: '; 
+        socket.send(JSON.stringify({'message': message, 'history': newmessage, 'attached_file': attached_file }));
+        lastUpload = '';
+        updateHistory('\nUser: ' + message);
+        var escaped_message = escapeHTML(message); 
+        var messageFormatted = escaped_message.replace(/\n/g, "<br>"); 
+        var timestamp = new Date().toLocaleTimeString();
+        var lastMessage = document.querySelector('.last-message');
+        if (lastMessage) {
+            lastMessage.classList.remove('last-message');
+        }
+        var chatMessage = '<div class="message user last-message"><span class="timestamp">' + timestamp + '</span><div class="bubble">' + messageFormatted + '</div></div>'; 
+        document.getElementById('messages').innerHTML += chatMessage;
+        var lastMessage2 = document.querySelector('.last-message');
+                    if (lastMessage2) {
+                        lastMessage2.classList.remove('last-message');
+                    }
+
+        // create a bot message div with a loading spinner
+        var botMessage = '<div class="message bot last-message"><span class="timestamp">' + timestamp + '</span><div class="bubble"><div class="spinner"></div></div></div>';
+        var element = document.createElement('div');
+        element.innerHTML = botMessage;
+        document.getElementById('messages').innerHTML += botMessage;
+        document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+        // remove input text
+        document.getElementById('message').value = '';
+        
+    });
+    document.getElementById('message').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            document.getElementById('send').click();
+        }
+    });
+    </script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+Flask
+Flask-SocketIO
+numpy
+openai
+requests
+faiss
+joblib
+tenacity
+textwrap
+Werkzeug
+PyPDF2
+beautifulsoup4
+selenium
+webdriver_manager
+nltk
