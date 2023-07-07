@@ -6,7 +6,14 @@ AIRobin3 is a powerful AI chatbot built with OpenAI and Flask. It is capable of 
 <details>
   <summary>Demo Video</summary>
 
+https://github.com/airobinnet/AIRobin3/assets/126980386/90de9181-4937-477e-b3c6-ce564df8cdcd
+
+
+
+https://github.com/airobinnet/AIRobin3/assets/126980386/a6d42115-3f4e-4c1c-b6c1-cb5f04748c05
+
 </details>
+
 ## Features
 
 - Uses OpenAI's GPT-4 model for generating responses.
