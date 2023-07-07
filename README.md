@@ -1,6 +1,6 @@
 # AIRobin3
 
-AIRobin3 is a powerful AI chatbot built with OpenAI and Flask. It is capable of handling complex tasks, from writing apps, websites, professional games, papers, and articles. It doesn't stop until the mission is complete (it tries at least).
+AIRobin3 is a powerful AI chatbot built with OpenAI and Flask. It is capable of handling complex tasks, from writing apps, websites, simple games, papers, and articles. It doesn't stop until the mission is complete (it tries at least).
 
 # Demo Videos
 <details>
